@@ -12,8 +12,14 @@ from sklearn.experimental import enable_hist_gradient_boosting
 # Ask the user for the stock ticker symbol
 stock_ticker = input("Enter the stock ticker symbol: ")
 
-# Download the stock data for the last year
-data = yf.download(stock_ticker, start='2022-01-15')
+# Get today's date
+today = datetime.datetime.now().date()
+
+# Subtract 365 days from today's date
+one_year_ago = today - datetime.timedelta(days=365)
+
+# Use the date one year ago as the start parameter in yf.download()
+data = yf.download(stock_ticker, start=one_year_ago)
 
 if data.empty:
     print("No data available for the stock ticker symbol: ", stock_ticker)
