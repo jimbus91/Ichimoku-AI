@@ -1,5 +1,6 @@
 import os
 import talib
+import datetime
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -105,29 +106,50 @@ else:
     # Plot the actual close prices for the last year
     ax.plot(last_year.index, last_year['Close'], color='blue', label='Actual')
 
-    # Plot the Ichimoku Indicator lines
-    #ax.plot(predictions_df.index, predictions_df['tenkan_sen'], label='Tenkan-sen')
-    #ax.plot(predictions_df.index, predictions_df['kijun_sen'], label='Kijun-sen')
-    ax.plot(predictions_df.index, predictions_df['senkou_span_a'], color='green', label='Senkou Span A')
-    ax.plot(predictions_df.index, predictions_df['senkou_span_b'], color='red', label='Senkou Span B')
-    #ax.plot(predictions_df.index, predictions_df['chikou_span'], label='Chikou Span')
+# Plot the Ichimoku Indicator lines with dynamic colors
+for i in range(len(predictions_df)):
+    # Determine the color based on which line is on top
+    color_a = 'green' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'red'
+    color_b = 'red' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'green'
+    
+    # Plot a small segment of the line in the determined color
+    if i < len(predictions_df) - 1:
+        ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_a'].iloc[i:i+2], color=color_a)
+        ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_b'].iloc[i:i+2], color=color_b)
+
+# Create dummy lines for legend
+line_a, = ax.plot([None], [None], color='green', label='Senkou Span A')
+line_b, = ax.plot([None], [None], color='red', label='Senkou Span B')
+
+# Add the legend to the plot
+ax.legend(handles=[line_a, line_b])
 
     # Add semi-transparent colors for filling the area between Senkou Span A and Senkou Span B
-    if last_year['senkou_span_a'].iloc[-1] < last_year['senkou_span_b'].iloc[-1]:
-        color = 'green'
-
-    if last_year['senkou_span_a'].iloc[-1] > last_year['senkou_span_b'].iloc[-1]:
+if last_year['senkou_span_a'].iloc[-1] < last_year['senkou_span_b'].iloc[-1]:
         color = 'red'
 
-    plt.fill_between(last_year.index, last_year['senkou_span_a'], last_year['senkou_span_b'], color=color, alpha=0.5)
+if last_year['senkou_span_a'].iloc[-1] > last_year['senkou_span_b'].iloc[-1]:
+        color = 'green'
 
-    # Set the x-axis to display the dates
-    ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    plt.xticks(rotation=45)
+# Fill the area between Senkou Span A and Senkou Span B in red
+# when Senkou Span A is above Senkou Span B
+plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
+                 where=(predictions_df['senkou_span_a'] > predictions_df['senkou_span_b']), 
+                 color='green', alpha=0.5)
 
-    # Add the legend and title
-    ax.legend()
-    plt.title(f'{stock_ticker} Ichimoku Price Prediction')
+# Fill the area between Senkou Span A and Senkou Span B in green
+# when Senkou Span B is above Senkou Span A
+plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
+                 where=(predictions_df['senkou_span_b'] > predictions_df['senkou_span_a']), 
+                 color='red', alpha=0.5)
 
-    # Show the plot
-    plt.show()
+# Set the x-axis to display the dates
+ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+plt.xticks(rotation=45)
+
+# Add the legend and title
+ax.legend()
+plt.title(f'{stock_ticker.upper()} Ichimoku Price Prediction')
+
+# Show the plot
+plt.show()
