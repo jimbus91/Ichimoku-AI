@@ -149,7 +149,7 @@ plt.xticks(rotation=45)
 
 # Add the legend and title
 ax.legend()
-plt.title(f'{stock_ticker.upper()} Ichimoku Price Prediction')
+plt.title(stock_ticker.upper() + " Ichimoku Price Prediction")
 
 # Show the plot
 plt.show()
