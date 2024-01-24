@@ -1,5 +1,6 @@
 import os
 import talib
+import warnings
 import datetime
 import numpy as np
 import pandas as pd
@@ -8,148 +9,119 @@ import matplotlib.pyplot as plt
 import matplotlib.style as style
 import matplotlib.dates as mdates
 from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.experimental import enable_hist_gradient_boosting
 
-# Ask the user for the stock ticker symbol
-stock_ticker = input("Enter the stock ticker symbol: ")
+# Suppress specific warnings
+warnings.filterwarnings('ignore', category=FutureWarning, message="Series.__getitem__ treating keys as positions is deprecated.*")
 
-# Get today's date
-today = datetime.datetime.now().date()
+while True:
+    # Ask the user for the stock ticker symbol
+    stock_ticker = input("Enter the stock ticker symbol or 'exit' to finish: ")
+    if stock_ticker.lower() == 'exit':
+        break
 
-# Subtract 365 days from today's date
-one_year_ago = today - datetime.timedelta(days=365)
+    # Get today's date
+    today = datetime.datetime.now().date()
 
-# Use the date one year ago as the start parameter in yf.download()
-data = yf.download(stock_ticker, start=one_year_ago)
+    # Subtract 365 days from today's date
+    one_year_ago = today - datetime.timedelta(days=365)
 
-if data.empty:
-    print("No data available for the stock ticker symbol: ", stock_ticker)
-else:
-    # Convert the date column to a datetime object
-    data['Date'] = pd.to_datetime(data.index)
+    # Use the date one year ago as the start parameter in yf.download()
+    data = yf.download(stock_ticker, start=one_year_ago)
 
-    # Set the date column as the index
-    data.set_index('Date', inplace=True)
+    if data.empty:
+        print("No data available for the stock ticker symbol:", stock_ticker, ". Please try another symbol.")
+        continue
+    else:
+        # Convert the date column to a datetime object
+        data['Date'] = pd.to_datetime(data.index)
 
-    # Sort the data by date
-    data.sort_index(inplace=True)
+        # Set the date column as the index
+        data.set_index('Date', inplace=True)
 
-    # Get the data for the last year
-    last_year = data.iloc[-365:].copy()
+        # Sort the data by date
+        data.sort_index(inplace=True)
 
-    # Calculate the Tenkan-sen
-    last_year.loc[:,'tenkan_sen'] = talib.SMA(last_year['Close'], timeperiod=9)
+        # Get the data for the last year
+        last_year = data.iloc[-365:].copy()
 
-    # Calculate the Kijun-sen
-    last_year.loc[:,'kijun_sen'] = talib.SMA(last_year['Close'], timeperiod=26)
+        # Calculate the Ichimoku components
+        last_year['tenkan_sen'] = talib.SMA(last_year['Close'], timeperiod=9)
+        last_year['kijun_sen'] = talib.SMA(last_year['Close'], timeperiod=26)
+        last_year['senkou_span_a'] = (last_year['tenkan_sen'] + last_year['kijun_sen']) / 2
+        last_year['senkou_span_b'] = talib.SMA(last_year['Close'], timeperiod=52)
+        last_year['chikou_span'] = talib.SMA(last_year['Close'], timeperiod=26)
 
-    # Calculate the Senkou Span A (Leading Span A)
-    last_year.loc[:,'senkou_span_a'] = (last_year['tenkan_sen'] + last_year['kijun_sen']) / 2
+        # Split the data into X (features) and y (target)
+        X = last_year[['tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span']]
+        y = last_year['Close']
 
-    # Calculate the Senkou Span B (Leading Span B)
-    last_year.loc[:,'senkou_span_b'] = talib.SMA(last_year['Close'], timeperiod=52)
+        # Create and fit the model
+        model = HistGradientBoostingRegressor()
+        model.fit(X, y)
 
-    # Calculate the Chikou Span
-    last_year.loc[:,'chikou_span'] = talib.SMA(last_year['Close'], timeperiod=26)
+        # Predictions for the next 30 days
+        future_dates = pd.date_range(start=data.index[-1], periods=30, freq='D')
+        future_data = pd.DataFrame(index=future_dates, columns=X.columns)
+        for column in future_data.columns:
+            future_data[column] = last_year[column].iloc[-1]
 
-    # Split the data into X (features) and y (target)
-    X = last_year[['tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span']]
-    y = last_year['Close']
+        predictions = model.predict(future_data)
+        predictions_df = pd.DataFrame(predictions, index=future_dates, columns=['Close'])
 
-    # Create an HistGradientBoostingRegressor instance
-    model = HistGradientBoostingRegressor()
+        # Adding randomness to the predictions (not a part of actual financial models)
+        std_dev = last_year['Close'].std()
+        random_values = np.random.normal(0, 0.2 * std_dev, predictions.shape)
+        predictions += random_values 
+        predictions_df = pd.DataFrame(predictions, index=future_dates, columns=['Close'])
+        predictions_df = pd.concat([last_year, predictions_df])
 
-    # Fit the model with the data
-    model.fit(X, y)
+        # Update Ichimoku components for the new predictions
+        predictions_df['tenkan_sen'] = talib.SMA(predictions_df['High'], timeperiod=9)
+        predictions_df['kijun_sen'] = talib.SMA(predictions_df['High'], timeperiod=26)
+        predictions_df['senkou_span_a'] = (predictions_df['tenkan_sen'] + predictions_df['kijun_sen']) / 2
+        predictions_df['senkou_span_b'] = talib.SMA(predictions_df['High'], timeperiod=52)
+        predictions_df['chikou_span'] = predictions_df['Close'].shift(-26)
 
-    # Make predictions for the next 30 days
-    future_dates = pd.date_range(start=data.index[-1], periods=30, freq='D')
-    future_data = pd.DataFrame(index=future_dates, columns=['tenkan_sen', 'kijun_sen', 'senkou_span_a', 'senkou_span_b', 'chikou_span'])
-    future_data['tenkan_sen'] = last_year['tenkan_sen'].iloc[-1]
-    future_data['kijun_sen'] = last_year['kijun_sen'].iloc[-1]
-    future_data['senkou_span_a'] = last_year['senkou_span_a'].iloc[-1]
-    future_data['senkou_span_b'] = last_year['senkou_span_b'].iloc[-1]
-    future_data['chikou_span'] = last_year['chikou_span'].iloc[-1]
+        # Set style and create plot
+        style.use('dark_background')
+        fig, ax = plt.subplots()
 
-    predictions = model.predict(future_data)
-    predictions_df = pd.DataFrame(predictions, index=future_dates, columns=['Close'])
+        # Plot the predicted close prices for the next 30 days
+        ax.plot(predictions_df.index, predictions_df['Close'], color='green' if predictions_df['Close'][-1] >= last_year['Close'][-1] else 'red', label='Predicted')
 
-    # Calculate the standard deviation of the last year's close prices
-    std_dev = last_year['Close'].std()
+        # Plot the actual close prices for the last year
+        ax.plot(last_year.index, last_year['Close'], color='blue', label='Actual')
 
-    # Generate random values with a standard deviation of 0.5 * the last year's close prices standard deviation
-    random_values = np.random.normal(0, 0.2 * std_dev, predictions.shape)
+        # Plot the Ichimoku Indicator lines with dynamic colors
+        for i in range(len(predictions_df)):
+            color_a = 'green' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'red'
+            color_b = 'red' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'green'
+            if i < len(predictions_df) - 1:
+                ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_a'].iloc[i:i+2], color=color_a)
+                ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_b'].iloc[i:i+2], color=color_b)
 
-    # Add the random values to the predicted prices
-    predictions += random_values 
-    predictions_df = pd.DataFrame(predictions, index=future_dates, columns=['Close'])
+        # Create dummy lines for legend
+        line_a, = ax.plot([None], [None], color='green', label='Senkou Span A')
+        line_b, = ax.plot([None], [None], color='red', label='Senkou Span B')
 
-    # Concatenate the last_year and predictions dataframes
-    predictions_df = pd.concat([last_year, predictions_df])
+        # Add the legend to the plot
+        ax.legend(handles=[line_a, line_b])
 
-    # Recalculate Ichimoku Indicator for the next 30 days
-    predictions_df.loc[:,'tenkan_sen'] = talib.SMA(predictions_df['High'], timeperiod=9)
-    predictions_df.loc[:,'kijun_sen'] = talib.SMA(predictions_df['High'], timeperiod=26)
-    predictions_df.loc[:,'senkou_span_a'] = (predictions_df['tenkan_sen'] + predictions_df['kijun_sen']) / 2
-    predictions_df.loc[:,'senkou_span_b'] = talib.SMA(predictions_df['High'], timeperiod=52)
-    predictions_df.loc[:,'chikou_span'] = predictions_df['Close'].shift(-26)
+        # Add semi-transparent colors for filling the area between Senkou Span A and Senkou Span B
+        plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
+                         where=(predictions_df['senkou_span_a'] > predictions_df['senkou_span_b']), 
+                         color='green', alpha=0.5)
+        plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
+                         where=(predictions_df['senkou_span_b'] > predictions_df['senkou_span_a']), 
+                         color='red', alpha=0.5)
 
-    # Set the style to dark theme
-    style.use('dark_background')
+        # Set the x-axis to display the dates
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.xticks(rotation=45)
 
-    # Create the plot
-    fig, ax = plt.subplots()
+        # Add the legend and title
+        ax.legend()
+        plt.title(stock_ticker.upper() + " Ichimoku Price Prediction")
 
-    # Plot the predicted close prices for the next 30 days
-    ax.plot(predictions_df.index, predictions_df['Close'], color='green' if predictions_df['Close'][-1] >= last_year['Close'][-1] else 'red', label='Predicted')
-
-    # Plot the actual close prices for the last year
-    ax.plot(last_year.index, last_year['Close'], color='blue', label='Actual')
-
-# Plot the Ichimoku Indicator lines with dynamic colors
-for i in range(len(predictions_df)):
-    # Determine the color based on which line is on top
-    color_a = 'green' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'red'
-    color_b = 'red' if predictions_df['senkou_span_a'].iloc[i] > predictions_df['senkou_span_b'].iloc[i] else 'green'
-    
-    # Plot a small segment of the line in the determined color
-    if i < len(predictions_df) - 1:
-        ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_a'].iloc[i:i+2], color=color_a)
-        ax.plot(predictions_df.index[i:i+2], predictions_df['senkou_span_b'].iloc[i:i+2], color=color_b)
-
-# Create dummy lines for legend
-line_a, = ax.plot([None], [None], color='green', label='Senkou Span A')
-line_b, = ax.plot([None], [None], color='red', label='Senkou Span B')
-
-# Add the legend to the plot
-ax.legend(handles=[line_a, line_b])
-
-    # Add semi-transparent colors for filling the area between Senkou Span A and Senkou Span B
-if last_year['senkou_span_a'].iloc[-1] < last_year['senkou_span_b'].iloc[-1]:
-        color = 'red'
-
-if last_year['senkou_span_a'].iloc[-1] > last_year['senkou_span_b'].iloc[-1]:
-        color = 'green'
-
-# Fill the area between Senkou Span A and Senkou Span B in red
-# when Senkou Span A is above Senkou Span B
-plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
-                 where=(predictions_df['senkou_span_a'] > predictions_df['senkou_span_b']), 
-                 color='green', alpha=0.5)
-
-# Fill the area between Senkou Span A and Senkou Span B in green
-# when Senkou Span B is above Senkou Span A
-plt.fill_between(predictions_df.index, predictions_df['senkou_span_a'], predictions_df['senkou_span_b'], 
-                 where=(predictions_df['senkou_span_b'] > predictions_df['senkou_span_a']), 
-                 color='red', alpha=0.5)
-
-# Set the x-axis to display the dates
-ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-plt.xticks(rotation=45)
-
-# Add the legend and title
-ax.legend()
-plt.title(stock_ticker.upper() + " Ichimoku Price Prediction")
-
-# Show the plot
-plt.show()
+        # Show the plot
+        plt.show()
